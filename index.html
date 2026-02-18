@@ -14,8 +14,8 @@
             font-family: 'Press Start 2P', cursive;
             overflow: hidden;
             user-select: none;
-            touch-action: none; /* Crucial pour mobile */
-            -webkit-touch-callout: none; /* iOS Safari */
+            touch-action: none;
+            -webkit-touch-callout: none;
         }
 
         #game-container {
@@ -58,7 +58,7 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 30; /* Augmenté pour être sûr d'être au dessus */
+            z-index: 30;
             text-align: center;
         }
 
@@ -70,15 +70,15 @@
             background: #e67e22;
             border: 4px solid #d35400;
             color: white;
-            padding: 20px 40px; /* Plus gros pour le tactile */
+            padding: 20px 40px;
             font-family: inherit;
             font-size: 18px;
             cursor: pointer;
             margin-top: 20px;
             transition: transform 0.1s;
-            touch-action: manipulation; /* Aide pour le clic mobile */
+            touch-action: manipulation;
             z-index: 40;
-            pointer-events: auto; /* S'assure que le bouton reçoit les clics */
+            pointer-events: auto;
         }
         
         .btn:hover {
@@ -90,27 +90,22 @@
             transform: scale(0.95);
         }
 
-        /* Indicateur de Joystick Virtuel */
-        #joystick-zone {
+        /* Indicateur de destination (petit cercle là où on touche) */
+        #touch-marker {
             position: absolute;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            border-radius: 50%;
-            width: 100px;
-            height: 100px;
-            display: none;
-            pointer-events: none;
-            transform: translate(-50%, -50%);
-            z-index: 5;
-        }
-        #joystick-knob {
-            position: absolute;
-            background: rgba(255, 255, 255, 0.5);
-            border-radius: 50%;
             width: 40px;
             height: 40px;
-            top: 50%;
-            left: 50%;
+            border: 2px dashed rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
             transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: none;
+            animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
         }
     </style>
 </head>
@@ -118,23 +113,21 @@
 
 <div id="game-container">
     <canvas id="gameCanvas"></canvas>
-    <div id="joystick-zone"><div id="joystick-knob"></div></div>
+    <div id="touch-marker"></div>
 
     <!-- UI (Vies, Score, Niveau) -->
     <div id="ui-layer">
         <div class="hud-text text-xl text-yellow-400">INABRA-kadrabra</div>
         <div class="hud-text" id="level-display">Niveau: 1</div>
         <div class="hud-text" id="score-display">Score: 0</div>
-        <div id="lives-display">
-            ❤️❤️❤️❤️❤️
-        </div>
+        <div id="lives-display">❤️❤️❤️❤️❤️</div>
         <div id="boss-hp-container" class="hidden mt-4 w-64 bg-gray-800 border-2 border-white h-6 relative">
             <div id="boss-hp-bar" class="bg-red-600 h-full w-full transition-all duration-200"></div>
             <span class="absolute top-0 left-0 w-full text-center text-xs leading-5 shadow-black drop-shadow-md">BOSS</span>
         </div>
         <div class="hud-text text-xs text-gray-300 mt-2 opacity-70">
             PC: Souris + Espace<br>
-            Mobile: Glisse + Tap
+            Mobile: Touche l'écran pour bouger
         </div>
     </div>
 
@@ -143,9 +136,10 @@
         <h1 class="text-3xl md:text-4xl text-green-400 mb-4 tracking-widest text-shadow px-4">INABRA-KADRABRA</h1>
         <p class="text-gray-300 mb-8 max-w-md leading-6 text-sm px-4">
             Survivre dans la jungle maudite.<br><br>
-            <span class="text-yellow-300">COMMANDES MOBILE:</span><br>
-            1. Pose un doigt et glisse pour BOUGER.<br>
-            2. Tape avec un autre doigt pour TIRER.<br>
+            <span class="text-yellow-300">AUDIO ACTIVÉ 🔊</span><br>
+            <span class="text-green-300">NOUVEAU CONTRÔLE :</span><br>
+            Le magicien court vers ton doigt !<br>
+            Tape avec un 2ème doigt pour TIRER.
         </p>
         <button class="btn" id="start-btn">JOUER</button>
     </div>
@@ -154,6 +148,7 @@
 <script>
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
+    const touchMarker = document.getElementById('touch-marker');
     
     // --- Configuration du Jeu ---
     let width, height;
@@ -171,7 +166,6 @@
     const state = {
         isRunning: false,
         isGameOver: false,
-        isPaused: false,
         level: 1,
         score: 0,
         enemiesKilledInLevel: 0,
@@ -179,90 +173,167 @@
         bossActive: false
     };
 
-    // Configuration des Niveaux
     const levels = {
         1: { killsToBoss: 10, spawnRate: 100, enemySpeed: 1.5, bossHp: 50, color: "#2d5a27", bossName: "Grand Serpent" },
         2: { killsToBoss: 15, spawnRate: 80, enemySpeed: 2.2, bossHp: 100, color: "#1e3c1b", bossName: "Roi Gorille" },
         3: { killsToBoss: 20, spawnRate: 60, enemySpeed: 3.0, bossHp: 200, color: "#2c1e3c", bossName: "Sorcier Maudit" }
     };
 
-    // Entités
-    let player;
-    let projectiles = [];
-    let enemies = [];
-    let particles = [];
-    let powerups = [];
-    let boss = null;
-
-    // --- CONTROLES (JOYSTICK & TOUCH) ---
-    const input = {
-        x: 0,
-        y: 0,
-        active: false,
-        shooting: false,
-        joystickOrigin: { x: 0, y: 0 }
+    // --- SYSTEME AUDIO (Synthétiseur WebAudio) ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    const sfx = {
+        shoot: () => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        },
+        hit: () => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+            osc.frequency.linearRampToValueAtTime(50, audioCtx.currentTime + 0.1);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        },
+        damage: () => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+            osc.frequency.linearRampToValueAtTime(50, audioCtx.currentTime + 0.3);
+            gain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.3);
+        },
+        powerup: () => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+            osc.frequency.linearRampToValueAtTime(800, audioCtx.currentTime + 0.2);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.2);
+        }
     };
 
-    const joystickZone = document.getElementById('joystick-zone');
-    const joystickKnob = document.getElementById('joystick-knob');
+    let musicInterval;
+    function startMusic() {
+        if (musicInterval) clearInterval(musicInterval);
+        let beat = 0;
+        musicInterval = setInterval(() => {
+            if (!state.isRunning) return;
+            const t = audioCtx.currentTime;
+            
+            // Drum Kick (sur les temps 1 et 3)
+            if (beat % 4 === 0) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.frequency.setValueAtTime(150, t);
+                osc.frequency.exponentialRampToValueAtTime(0.01, t + 0.5);
+                gain.gain.setValueAtTime(0.5, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.5);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.5);
+            }
+            
+            // Snare/Hat (sur les autres temps, plus rapide)
+            if (beat % 2 === 0 && beat % 4 !== 0) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'triangle'; // Un peu noise
+                osc.frequency.setValueAtTime(100, t); // Bruit blanc simulé malproprement mais ça marche pour du retro
+                gain.gain.setValueAtTime(0.1, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(t);
+                osc.stop(t + 0.1);
+            }
 
-    // Gestion Touch (Mobile)
-    // IMPORTANT: On attache les écouteurs avec { passive: false } pour pouvoir utiliser preventDefault
-    // Mais on ne bloque l'événement que si le jeu est EN COURS pour laisser les boutons fonctionner.
+            // Bassline (Tribal simple)
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(100 + (beat % 3)*20, t);
+            gain.gain.setValueAtTime(0.05, t);
+            gain.gain.linearRampToValueAtTime(0, t + 0.1);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(t);
+            osc.stop(t + 0.1);
 
+            beat++;
+        }, 250); // 120 BPM approx
+    }
+
+    // --- CONTROLES (SUIVI DOIGT) ---
+    const input = {
+        targetX: null,
+        targetY: null,
+        isFollowing: false,
+        shooting: false
+    };
+
+    // Gestion Touch
     window.addEventListener('touchstart', e => {
-        // Si le jeu n'est pas lancé, on laisse faire (pour pouvoir cliquer sur les boutons)
         if (!state.isRunning) return;
-
-        // Si le jeu tourne, on empêche le scroll/zoom et on gère le joystick
         e.preventDefault();
 
-        // Le premier doigt active le mouvement
-        if (!input.active && e.touches.length > 0) {
-            const touch = e.touches[0];
-            input.active = true;
-            input.joystickOrigin.x = touch.clientX;
-            input.joystickOrigin.y = touch.clientY;
+        for (let i = 0; i < e.touches.length; i++) {
+            const touch = e.touches[i];
             
-            // Afficher le joystick visuel
-            joystickZone.style.display = 'block';
-            joystickZone.style.left = touch.clientX + 'px';
-            joystickZone.style.top = touch.clientY + 'px';
-            joystickKnob.style.transform = `translate(-50%, -50%)`;
-        }
-
-        // Si plus d'un doigt, on tire
-        if (e.touches.length > 1) {
-            input.shooting = true;
+            // Le premier doigt définit la cible de mouvement
+            if (i === 0) {
+                input.isFollowing = true;
+                input.targetX = touch.clientX;
+                input.targetY = touch.clientY;
+                
+                touchMarker.style.display = 'block';
+                touchMarker.style.left = touch.clientX + 'px';
+                touchMarker.style.top = touch.clientY + 'px';
+            }
+            // Tout doigt supplémentaire (index > 0) déclenche le tir
+            else {
+                input.shooting = true;
+            }
         }
     }, { passive: false });
 
     window.addEventListener('touchmove', e => {
-        if (!state.isRunning) return; // Laisser passer si menu
+        if (!state.isRunning) return;
         e.preventDefault();
 
-        if (input.active && e.touches.length > 0) {
+        // Mettre à jour la cible avec le premier doigt
+        if (e.touches.length > 0) {
             const touch = e.touches[0];
-            const dx = touch.clientX - input.joystickOrigin.x;
-            const dy = touch.clientY - input.joystickOrigin.y;
+            input.targetX = touch.clientX;
+            input.targetY = touch.clientY;
             
-            const distance = Math.hypot(dx, dy);
-            const maxDist = 50;
-            
-            const visualDist = Math.min(distance, maxDist);
-            const angle = Math.atan2(dy, dx);
-            const knobX = Math.cos(angle) * visualDist;
-            const knobY = Math.sin(angle) * visualDist;
-            
-            joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
-
-            if (distance > 5) {
-                input.x = dx / distance;
-                input.y = dy / distance;
-            } else {
-                input.x = 0;
-                input.y = 0;
-            }
+            touchMarker.style.left = touch.clientX + 'px';
+            touchMarker.style.top = touch.clientY + 'px';
         }
     }, { passive: false });
 
@@ -270,42 +341,47 @@
         if (!state.isRunning) return;
         e.preventDefault();
         
+        // Si on relève le premier doigt (plus de doigts ou seulement le 2eme reste)
+        // On arrête de suivre si on n'a plus de doigts du tout
         if (e.touches.length === 0) {
-            input.active = false;
-            input.x = 0;
-            input.y = 0;
+            input.isFollowing = false;
             input.shooting = false;
-            joystickZone.style.display = 'none';
-        } else if (e.touches.length === 1) {
-            // Si on relâche le doigt de tir mais qu'on garde le mouvement
-            input.shooting = false;
-            
-            // Recalibrer si le doigt restant est celui du mouvement (index 0)
-            const touch = e.touches[0];
-            // On garde le joystick actif là où il est
+            touchMarker.style.display = 'none';
+        } 
+        // Si il reste des doigts, on vérifie si c'était le doigt de tir
+        else {
+             // Simplification : si on touche encore, on bouge, mais on coupe le tir
+             input.shooting = false;
         }
     });
 
-    // Gestion des clics sur les boutons (Solution explicite pour iOS)
-    document.getElementById('start-btn').addEventListener('click', startGame);
-    // On ajoutera les écouteurs pour les boutons générés dynamiquement (Restart) dans le HTML injecté
-
-    // Gestion PC
-    window.addEventListener('mousemove', e => {
+    // Gestion PC (Souris)
+    window.addEventListener('mousedown', e => {
         if (!state.isRunning) return;
         if (!('ontouchstart' in window)) {
-            if(player) {
-                const angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
-                const dist = Math.hypot(e.clientX - player.x, e.clientY - player.y);
-                
-                if (dist > 10) {
-                    input.x = Math.cos(angle);
-                    input.y = Math.sin(angle);
-                } else {
-                    input.x = 0;
-                    input.y = 0;
-                }
-            }
+            input.isFollowing = true;
+            input.targetX = e.clientX;
+            input.targetY = e.clientY;
+            touchMarker.style.display = 'block';
+            touchMarker.style.left = e.clientX + 'px';
+            touchMarker.style.top = e.clientY + 'px';
+        }
+    });
+
+    window.addEventListener('mousemove', e => {
+        if (!state.isRunning) return;
+        if (input.isFollowing && !('ontouchstart' in window)) {
+            input.targetX = e.clientX;
+            input.targetY = e.clientY;
+            touchMarker.style.left = e.clientX + 'px';
+            touchMarker.style.top = e.clientY + 'px';
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!('ontouchstart' in window)) {
+            input.isFollowing = false;
+            touchMarker.style.display = 'none';
         }
     });
 
@@ -316,9 +392,14 @@
         if (e.code === 'Space') input.shooting = false;
     });
 
+    document.getElementById('start-btn').addEventListener('click', () => {
+        // Init Audio Context on user gesture
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        startGame();
+    });
 
-    // --- CLASSES JEU (Player, Projectile, Enemy, Boss, PowerUp, Particle) ---
-    // (Identiques à la version précédente mais encapsulées)
+    // --- CLASSES JEU ---
+    let player, projectiles, enemies, particles, powerups, boss;
 
     class Player {
         constructor() {
@@ -326,7 +407,6 @@
             this.y = height / 2;
             this.size = 40;
             this.speed = 5;
-            this.color = '#3498db';
             this.lives = 5;
             this.maxLives = 5;
             this.fireRate = 25;
@@ -336,12 +416,21 @@
         }
 
         update() {
-            let dx = input.x;
-            let dy = input.y;
-            let currentSpeed = this.speedBoost ? this.speed * 1.5 : this.speed;
+            // Mouvement vers la cible (Doigt)
+            if (input.isFollowing && input.targetX !== null) {
+                const dx = input.targetX - this.x;
+                const dy = input.targetY - this.y;
+                const dist = Math.hypot(dx, dy);
+                
+                let currentSpeed = this.speedBoost ? this.speed * 1.5 : this.speed;
 
-            this.x += dx * currentSpeed;
-            this.y += dy * currentSpeed;
+                if (dist > 10) { // Zone morte pour éviter le tremblement
+                    this.x += (dx / dist) * currentSpeed;
+                    this.y += (dy / dist) * currentSpeed;
+                }
+            }
+
+            // Limites écran
             this.x = Math.max(this.size, Math.min(width - this.size, this.x));
             this.y = Math.max(this.size, Math.min(height - this.size, this.y));
         }
@@ -359,13 +448,17 @@
             ctx.font = `${this.size}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            if (input.x < 0) ctx.scale(-1, 1);
+            // Flip si on va à gauche
+            if (input.targetX < this.x) ctx.scale(-1, 1);
             ctx.fillText('🧙‍♂️', 0, 0);
             ctx.restore();
         }
 
         shoot() {
             if (state.frames - this.lastShot < this.fireRate) return;
+            
+            sfx.shoot(); // Bruitage
+
             let target = null;
             let minDist = Infinity;
             if (state.bossActive && boss) {
@@ -384,12 +477,13 @@
             if (target) {
                 angle = Math.atan2(target.y - this.y, target.x - this.x);
             } else {
-                if (input.x !== 0 || input.y !== 0) {
-                    angle = Math.atan2(input.y, input.x);
-                } else {
-                    angle = -Math.PI / 2;
+                angle = -Math.PI / 2; // Haut par défaut
+                // Tirer vers le mouvement si on bouge
+                if (input.isFollowing) {
+                    angle = Math.atan2(input.targetY - this.y, input.targetX - this.x);
                 }
             }
+            
             projectiles.push(new Projectile(this.x, this.y, angle));
             if (this.spreadShot) {
                 projectiles.push(new Projectile(this.x, this.y, angle - 0.3));
@@ -401,6 +495,7 @@
 
         takeDamage() {
             this.lives--;
+            sfx.damage();
             updateHUD();
             screenShake(10);
             createParticles(this.x, this.y, '#e74c3c', 10);
@@ -485,6 +580,7 @@
         }
         attack() {
             const angle = Math.atan2(player.y - this.y, player.x - this.x);
+            sfx.shoot(); // Bruitage boss
             if (state.level === 1) {
                 projectiles.push(new Projectile(this.x, this.y, angle, true));
             } else if (state.level === 2) {
@@ -571,8 +667,6 @@
         }
     }
 
-    // --- LOGIQUE JEU ---
-
     function spawnEnemy() {
         if (state.bossActive) return;
         let x, y;
@@ -594,6 +688,7 @@
                 if (dist < boss.size/2 + p.radius) {
                     boss.hp -= 5;
                     p.markedForDeletion = true;
+                    sfx.hit();
                     createParticles(p.x, p.y, '#fff', 5);
                     const percent = (boss.hp / boss.maxHp) * 100;
                     document.getElementById('boss-hp-bar').style.width = `${percent}%`;
@@ -609,6 +704,7 @@
                         e.markedForDeletion = true;
                         state.score += 10;
                         state.enemiesKilledInLevel++;
+                        sfx.hit();
                         createParticles(e.x, e.y, '#2ecc71', 8);
                         if (Math.random() < 0.15) powerups.push(new PowerUp(e.x, e.y));
                         updateHUD();
@@ -646,6 +742,7 @@
     }
 
     function applyPowerUp(type) {
+        sfx.powerup();
         const text = document.createElement('div');
         text.className = 'absolute text-yellow-300 font-bold text-xl animate-bounce';
         text.style.left = player.x + 'px';
@@ -725,7 +822,10 @@
         state.frames++;
         player.update();
         player.draw();
+        
+        // Auto-shoot si demandé via touch ou space
         if (input.shooting) player.shoot();
+        
         if (!state.bossActive && state.frames % levels[state.level].spawnRate === 0) spawnEnemy();
         
         enemies.forEach((e, i) => { e.update(); e.draw(); if (e.markedForDeletion) enemies.splice(i, 1); });
@@ -749,7 +849,6 @@
         document.getElementById('lives-display').innerHTML = hearts;
     }
 
-    // Gestion centralisée de l'Overlay pour éviter les soucis d'event listener
     function showOverlay(htmlContent) {
         const overlay = document.getElementById('overlay');
         overlay.classList.remove('hidden');
@@ -757,10 +856,8 @@
     }
 
     function startGame() {
-        console.log("Game Starting...");
         document.getElementById('overlay').classList.add('hidden');
         
-        // Reset COMPLET
         player = new Player();
         enemies = [];
         projectiles = [];
@@ -775,16 +872,18 @@
         state.isRunning = true;
         state.bossActive = false;
         
-        input.active = false;
+        input.isFollowing = false;
+        input.targetX = null;
+        input.targetY = null;
         input.shooting = false;
         
         updateHUD();
         document.getElementById('boss-hp-container').classList.add('hidden');
         
+        startMusic();
         loop();
     }
 
-    // Exposer globalement pour le HTML injecté dans l'overlay
     window.resumeGame = function() {
         document.getElementById('overlay').classList.add('hidden');
         state.isRunning = true;
@@ -792,10 +891,11 @@
         loop();
     };
 
-    window.startGame = startGame; // Explicite pour les onclick HTML
+    window.startGame = startGame;
 
     function endGame() {
         state.isRunning = false;
+        clearInterval(musicInterval);
         showOverlay(`
             <h1 class="text-red-500 text-4xl mb-4">GAME OVER</h1>
             <p class="text-xl mb-4">Score Final: ${state.score}</p>
@@ -805,6 +905,7 @@
 
     function winGame() {
         state.isRunning = false;
+        clearInterval(musicInterval);
         showOverlay(`
             <h1 class="text-yellow-400 text-4xl mb-4">VICTOIRE !</h1>
             <p class="mb-4">Tu as survécu à la jungle INABRA-KADRABRA !</p>
