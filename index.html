@@ -14,7 +14,8 @@
             font-family: 'Press Start 2P', cursive;
             overflow: hidden;
             user-select: none;
-            touch-action: none; /* Empêche le scroll sur mobile */
+            touch-action: none; /* Crucial pour mobile */
+            -webkit-touch-callout: none; /* iOS Safari */
         }
 
         #game-container {
@@ -57,7 +58,7 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            z-index: 20;
+            z-index: 30; /* Augmenté pour être sûr d'être au dessus */
             text-align: center;
         }
 
@@ -69,17 +70,24 @@
             background: #e67e22;
             border: 4px solid #d35400;
             color: white;
-            padding: 15px 30px;
+            padding: 20px 40px; /* Plus gros pour le tactile */
             font-family: inherit;
-            font-size: 16px;
+            font-size: 18px;
             cursor: pointer;
             margin-top: 20px;
             transition: transform 0.1s;
+            touch-action: manipulation; /* Aide pour le clic mobile */
+            z-index: 40;
+            pointer-events: auto; /* S'assure que le bouton reçoit les clics */
         }
         
         .btn:hover {
             transform: scale(1.05);
             background: #f39c12;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
         }
 
         /* Indicateur de Joystick Virtuel */
@@ -92,6 +100,7 @@
             display: none;
             pointer-events: none;
             transform: translate(-50%, -50%);
+            z-index: 5;
         }
         #joystick-knob {
             position: absolute;
@@ -124,21 +133,21 @@
             <span class="absolute top-0 left-0 w-full text-center text-xs leading-5 shadow-black drop-shadow-md">BOSS</span>
         </div>
         <div class="hud-text text-xs text-gray-300 mt-2 opacity-70">
-            PC: Souris pour bouger, ESPACE pour tirer<br>
-            Mobile: Glisse pour bouger, tape avec 2ème doigt pour tirer
+            PC: Souris + Espace<br>
+            Mobile: Glisse + Tap
         </div>
     </div>
 
     <!-- Ecrans de Menu / Game Over -->
     <div id="overlay">
-        <h1 class="text-4xl text-green-400 mb-4 tracking-widest text-shadow">INABRA-KADRABRA</h1>
-        <p class="text-gray-300 mb-8 max-w-md leading-6 text-sm">
-            Survivre dans la jungle maudite.<br>
-            <span class="text-yellow-300">NOUVEAU:</span> Glisse le doigt pour bouger.<br>
-            Tape avec un autre doigt ou ESPACE pour tirer.<br>
-            (Visée Automatique activée)
+        <h1 class="text-3xl md:text-4xl text-green-400 mb-4 tracking-widest text-shadow px-4">INABRA-KADRABRA</h1>
+        <p class="text-gray-300 mb-8 max-w-md leading-6 text-sm px-4">
+            Survivre dans la jungle maudite.<br><br>
+            <span class="text-yellow-300">COMMANDES MOBILE:</span><br>
+            1. Pose un doigt et glisse pour BOUGER.<br>
+            2. Tape avec un autre doigt pour TIRER.<br>
         </p>
-        <button class="btn" id="start-btn" onclick="startGame()">JOUER</button>
+        <button class="btn" id="start-btn">JOUER</button>
     </div>
 </div>
 
@@ -198,11 +207,15 @@
     const joystickKnob = document.getElementById('joystick-knob');
 
     // Gestion Touch (Mobile)
+    // IMPORTANT: On attache les écouteurs avec { passive: false } pour pouvoir utiliser preventDefault
+    // Mais on ne bloque l'événement que si le jeu est EN COURS pour laisser les boutons fonctionner.
+
     window.addEventListener('touchstart', e => {
-        // Empêcher le comportement par défaut (zoom, scroll)
-        if(e.target !== document.getElementById('start-btn')) {
-            e.preventDefault();
-        }
+        // Si le jeu n'est pas lancé, on laisse faire (pour pouvoir cliquer sur les boutons)
+        if (!state.isRunning) return;
+
+        // Si le jeu tourne, on empêche le scroll/zoom et on gère le joystick
+        e.preventDefault();
 
         // Le premier doigt active le mouvement
         if (!input.active && e.touches.length > 0) {
@@ -225,17 +238,17 @@
     }, { passive: false });
 
     window.addEventListener('touchmove', e => {
+        if (!state.isRunning) return; // Laisser passer si menu
         e.preventDefault();
+
         if (input.active && e.touches.length > 0) {
             const touch = e.touches[0];
             const dx = touch.clientX - input.joystickOrigin.x;
             const dy = touch.clientY - input.joystickOrigin.y;
             
-            // Calculer la direction normalisée
             const distance = Math.hypot(dx, dy);
-            const maxDist = 50; // Rayon du joystick
+            const maxDist = 50;
             
-            // Mouvement du bouton visuel
             const visualDist = Math.min(distance, maxDist);
             const angle = Math.atan2(dy, dx);
             const knobX = Math.cos(angle) * visualDist;
@@ -243,9 +256,8 @@
             
             joystickKnob.style.transform = `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
 
-            // Input normalisé (-1 à 1)
-            if (distance > 5) { // Deadzone
-                input.x = dx / distance; // Juste la direction
+            if (distance > 5) {
+                input.x = dx / distance;
                 input.y = dy / distance;
             } else {
                 input.x = 0;
@@ -255,28 +267,33 @@
     }, { passive: false });
 
     window.addEventListener('touchend', e => {
+        if (!state.isRunning) return;
         e.preventDefault();
-        // Si on lache tous les doigts
+        
         if (e.touches.length === 0) {
             input.active = false;
             input.x = 0;
             input.y = 0;
             input.shooting = false;
             joystickZone.style.display = 'none';
-        } 
-        // Si on lache le 2eme doigt mais qu'il en reste un
-        else if (e.touches.length === 1) {
+        } else if (e.touches.length === 1) {
+            // Si on relâche le doigt de tir mais qu'on garde le mouvement
             input.shooting = false;
+            
+            // Recalibrer si le doigt restant est celui du mouvement (index 0)
+            const touch = e.touches[0];
+            // On garde le joystick actif là où il est
         }
     });
 
-    // Gestion PC (Souris + Clavier)
+    // Gestion des clics sur les boutons (Solution explicite pour iOS)
+    document.getElementById('start-btn').addEventListener('click', startGame);
+    // On ajoutera les écouteurs pour les boutons générés dynamiquement (Restart) dans le HTML injecté
+
+    // Gestion PC
     window.addEventListener('mousemove', e => {
-        // Optionnel : La souris agit comme un joystick relatif au centre du joueur ou direct
-        // Pour simplifier "doigt pour bouger", sur PC on va faire : le joueur va vers la souris
-        if (!('ontouchstart' in window)) { // Seulement si pas tactile
-            const dx = e.clientX - width/2; // On suppose joueur au centre ou on utilise player.x
-            // Mais player bouge. Donc on calcule vecteur vers souris
+        if (!state.isRunning) return;
+        if (!('ontouchstart' in window)) {
             if(player) {
                 const angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
                 const dist = Math.hypot(e.clientX - player.x, e.clientY - player.y);
@@ -292,7 +309,6 @@
         }
     });
 
-    // Espace pour tirer
     window.addEventListener('keydown', e => {
         if (e.code === 'Space') input.shooting = true;
     });
@@ -301,7 +317,9 @@
     });
 
 
-    // --- CLASSE JOUEUR ---
+    // --- CLASSES JEU (Player, Projectile, Enemy, Boss, PowerUp, Particle) ---
+    // (Identiques à la version précédente mais encapsulées)
+
     class Player {
         constructor() {
             this.x = width / 2;
@@ -311,11 +329,9 @@
             this.color = '#3498db';
             this.lives = 5;
             this.maxLives = 5;
-            
-            // Powerups
-            this.fireRate = 25; // Frames entre les tirs
+            this.fireRate = 25;
             this.lastShot = 0;
-            this.spreadShot = false; // Tir multiple
+            this.spreadShot = false;
             this.speedBoost = false;
         }
 
@@ -326,8 +342,6 @@
 
             this.x += dx * currentSpeed;
             this.y += dy * currentSpeed;
-
-            // Limites écran
             this.x = Math.max(this.size, Math.min(width - this.size, this.x));
             this.y = Math.max(this.size, Math.min(height - this.size, this.y));
         }
@@ -335,8 +349,6 @@
         draw() {
             ctx.save();
             ctx.translate(this.x, this.y);
-            
-            // Aura si boost
             if (this.speedBoost) {
                 ctx.beginPath();
                 ctx.arc(0, 0, this.size/1.5, 0, Math.PI * 2);
@@ -344,34 +356,23 @@
                 ctx.lineWidth = 3;
                 ctx.stroke();
             }
-
-            // Mage Emoji
             ctx.font = `${this.size}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            
-            // Flip emoji selon direction
             if (input.x < 0) ctx.scale(-1, 1);
-            
             ctx.fillText('🧙‍♂️', 0, 0);
             ctx.restore();
         }
 
         shoot() {
             if (state.frames - this.lastShot < this.fireRate) return;
-
-            // AUTO-AIM : Trouver la cible la plus proche
             let target = null;
             let minDist = Infinity;
-
-            // Chercher Boss
             if (state.bossActive && boss) {
                 const dist = Math.hypot(boss.x - this.x, boss.y - this.y);
                 target = boss;
                 minDist = dist;
             }
-
-            // Chercher Ennemis (si plus proche que le boss ou pas de boss)
             enemies.forEach(e => {
                 const dist = Math.hypot(e.x - this.x, e.y - this.y);
                 if (dist < minDist) {
@@ -379,28 +380,21 @@
                     target = e;
                 }
             });
-
             let angle;
             if (target) {
                 angle = Math.atan2(target.y - this.y, target.x - this.x);
             } else {
-                // Si pas d'ennemis, on tire devant (selon mouvement ou à droite par défaut)
                 if (input.x !== 0 || input.y !== 0) {
                     angle = Math.atan2(input.y, input.x);
                 } else {
-                    angle = -Math.PI / 2; // Vers le haut par défaut
+                    angle = -Math.PI / 2;
                 }
             }
-            
-            // Tir normal
             projectiles.push(new Projectile(this.x, this.y, angle));
-
-            // Tir multiple (PowerUp)
             if (this.spreadShot) {
                 projectiles.push(new Projectile(this.x, this.y, angle - 0.3));
                 projectiles.push(new Projectile(this.x, this.y, angle + 0.3));
             }
-
             this.lastShot = state.frames;
             createParticles(this.x, this.y, '#3498db', 3);
         }
@@ -410,14 +404,10 @@
             updateHUD();
             screenShake(10);
             createParticles(this.x, this.y, '#e74c3c', 10);
-            
-            if (this.lives <= 0) {
-                endGame();
-            }
+            if (this.lives <= 0) endGame();
         }
     }
 
-    // --- CLASSE PROJECTILE ---
     class Projectile {
         constructor(x, y, angle, isEnemy = false) {
             this.x = x;
@@ -426,27 +416,20 @@
             this.speed = isEnemy ? 6 : 10;
             this.vx = Math.cos(angle) * this.speed;
             this.vy = Math.sin(angle) * this.speed;
-            this.color = isEnemy ? '#e74c3c' : '#f1c40f'; // Rouge ennemi, Or joueur
+            this.color = isEnemy ? '#e74c3c' : '#f1c40f';
             this.isEnemy = isEnemy;
             this.markedForDeletion = false;
         }
-
         update() {
             this.x += this.vx;
             this.y += this.vy;
-
-            // Hors écran
-            if (this.x < 0 || this.x > width || this.y < 0 || this.y > height) {
-                this.markedForDeletion = true;
-            }
+            if (this.x < 0 || this.x > width || this.y < 0 || this.y > height) this.markedForDeletion = true;
         }
-
         draw() {
             ctx.beginPath();
             ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
             ctx.fillStyle = this.color;
             ctx.fill();
-            // Glow effect
             ctx.shadowBlur = 10;
             ctx.shadowColor = this.color;
             ctx.fill();
@@ -454,27 +437,22 @@
         }
     }
 
-    // --- CLASSE ENNEMI ---
     class Enemy {
         constructor(x, y) {
             this.x = x;
             this.y = y;
             this.size = 30;
             this.speed = levels[state.level].enemySpeed + (Math.random() * 0.5);
-            this.hp = state.level; // PV augmente avec le niveau
+            this.hp = state.level;
             this.markedForDeletion = false;
-            
-            // Types d'ennemis selon niveau
             const types = ['🐍', '🕷️', '🦇'];
             this.emoji = types[(state.level - 1) % types.length];
         }
-
         update() {
             const angle = Math.atan2(player.y - this.y, player.x - this.x);
             this.x += Math.cos(angle) * this.speed;
             this.y += Math.sin(angle) * this.speed;
         }
-
         draw() {
             ctx.font = `${this.size}px Arial`;
             ctx.textAlign = 'center';
@@ -483,68 +461,47 @@
         }
     }
 
-    // --- CLASSE BOSS ---
     class Boss {
         constructor() {
             this.x = width / 2;
             this.y = -100;
-            this.targetY = 100; // Descend dans l'arène
+            this.targetY = 100;
             this.size = 80;
             this.maxHp = levels[state.level].bossHp;
             this.hp = this.maxHp;
             this.angle = 0;
             this.actionTimer = 0;
-            
             const bosses = ['🐉', '🦍', '👺'];
             this.emoji = bosses[state.level - 1];
         }
-
         update() {
-            // Entrée en scène
-            if (this.y < this.targetY) {
-                this.y += 2;
-                return;
-            }
-
-            // Mouvement flottant
+            if (this.y < this.targetY) { this.y += 2; return; }
             this.x += Math.sin(state.frames / 50) * 3;
-
-            // Attaque
             this.actionTimer++;
-            if (this.actionTimer > 60) { // Attaque toutes les secondes approx
+            if (this.actionTimer > 60) {
                 this.attack();
                 this.actionTimer = 0;
             }
         }
-
         attack() {
             const angle = Math.atan2(player.y - this.y, player.x - this.x);
-            
-            // Pattern selon niveau
             if (state.level === 1) {
-                // Tir simple
                 projectiles.push(new Projectile(this.x, this.y, angle, true));
             } else if (state.level === 2) {
-                // Tir triple
                 projectiles.push(new Projectile(this.x, this.y, angle, true));
                 projectiles.push(new Projectile(this.x, this.y, angle - 0.3, true));
                 projectiles.push(new Projectile(this.x, this.y, angle + 0.3, true));
             } else {
-                // Spirale infernale
                 for(let i=0; i<8; i++) {
                     projectiles.push(new Projectile(this.x, this.y, angle + (i * Math.PI/4), true));
                 }
             }
         }
-
         draw() {
-            // Barre de vie gérée par le HTML, on dessine juste le boss
             ctx.save();
             ctx.translate(this.x, this.y);
-            // Effet de boss (grandit/rétrécit)
             const scale = 1 + Math.sin(state.frames / 20) * 0.1;
             ctx.scale(scale, scale);
-            
             ctx.font = `${this.size}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -553,21 +510,17 @@
         }
     }
 
-    // --- CLASSE POWERUP ---
     class PowerUp {
         constructor(x, y) {
             this.x = x;
             this.y = y;
             this.size = 20;
             this.markedForDeletion = false;
-            
             const types = [
                 { type: 'heal', emoji: '❤️', color: '#e74c3c' },
                 { type: 'spread', emoji: '⚡', color: '#f1c40f' },
                 { type: 'speed', emoji: '👟', color: '#3498db' }
             ];
-            
-            // Plus de chance de Heal si vie basse
             let rand = Math.random();
             if (player.lives <= 2 && rand < 0.5) {
                 this.props = types[0];
@@ -575,13 +528,11 @@
                 this.props = types[Math.floor(Math.random() * types.length)];
             }
         }
-
         draw() {
             ctx.beginPath();
             ctx.arc(this.x, this.y + Math.sin(state.frames/10)*5, 15, 0, Math.PI*2);
             ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
             ctx.fill();
-            
             ctx.font = `${this.size}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -589,7 +540,6 @@
         }
     }
 
-    // --- SYSTEME DE PARTICULES ---
     class Particle {
         constructor(x, y, color, speed) {
             this.x = x;
@@ -600,7 +550,7 @@
             const velocity = Math.random() * speed;
             this.vx = Math.cos(angle) * velocity;
             this.vy = Math.sin(angle) * velocity;
-            this.life = 1.0; // Opacité
+            this.life = 1.0;
         }
         update() {
             this.x += this.vx;
@@ -621,12 +571,10 @@
         }
     }
 
-    // --- FONCTIONS DU JEU ---
+    // --- LOGIQUE JEU ---
 
     function spawnEnemy() {
         if (state.bossActive) return;
-        
-        // Spawn sur les bords
         let x, y;
         if (Math.random() < 0.5) {
             x = Math.random() < 0.5 ? -30 : width + 30;
@@ -639,29 +587,19 @@
     }
 
     function checkCollisions() {
-        // Projectiles Joueur vs Ennemis/Boss
         projectiles.forEach(p => {
             if (p.isEnemy) return;
-
-            // Vs Boss
             if (state.bossActive && boss) {
                 const dist = Math.hypot(p.x - boss.x, p.y - boss.y);
                 if (dist < boss.size/2 + p.radius) {
-                    boss.hp -= 5; // Dégâts au boss
+                    boss.hp -= 5;
                     p.markedForDeletion = true;
                     createParticles(p.x, p.y, '#fff', 5);
-                    
-                    // Update boss bar
                     const percent = (boss.hp / boss.maxHp) * 100;
                     document.getElementById('boss-hp-bar').style.width = `${percent}%`;
-
-                    if (boss.hp <= 0) {
-                        levelComplete();
-                    }
+                    if (boss.hp <= 0) levelComplete();
                 }
             }
-
-            // Vs Ennemis
             enemies.forEach(e => {
                 const dist = Math.hypot(p.x - e.x, p.y - e.y);
                 if (dist < e.size/2 + p.radius) {
@@ -672,12 +610,7 @@
                         state.score += 10;
                         state.enemiesKilledInLevel++;
                         createParticles(e.x, e.y, '#2ecc71', 8);
-                        
-                        // Drop chance
-                        if (Math.random() < 0.15) {
-                            powerups.push(new PowerUp(e.x, e.y));
-                        }
-
+                        if (Math.random() < 0.15) powerups.push(new PowerUp(e.x, e.y));
                         updateHUD();
                     } else {
                         createParticles(e.x, e.y, '#fff', 2);
@@ -686,16 +619,14 @@
             });
         });
 
-        // Joueur vs Ennemis (Collision)
         enemies.forEach(e => {
             const dist = Math.hypot(player.x - e.x, player.y - e.y);
             if (dist < player.size/2 + e.size/2) {
                 player.takeDamage();
-                e.markedForDeletion = true; // L'ennemi meurt en touchant
+                e.markedForDeletion = true;
             }
         });
 
-        // Joueur vs Projectiles Ennemis
         projectiles.forEach(p => {
             if (!p.isEnemy) return;
             const dist = Math.hypot(p.x - player.x, p.y - player.y);
@@ -705,7 +636,6 @@
             }
         });
 
-        // Joueur vs Powerups
         powerups.forEach(p => {
             const dist = Math.hypot(player.x - p.x, player.y - p.y);
             if (dist < player.size/2 + p.size) {
@@ -716,7 +646,6 @@
     }
 
     function applyPowerUp(type) {
-        // Feedback visuel texte
         const text = document.createElement('div');
         text.className = 'absolute text-yellow-300 font-bold text-xl animate-bounce';
         text.style.left = player.x + 'px';
@@ -730,14 +659,13 @@
             updateHUD();
         } else if (type === 'spread') {
             player.spreadShot = true;
-            setTimeout(() => player.spreadShot = false, 8000); // 8 secondes
+            setTimeout(() => player.spreadShot = false, 8000);
         } else if (type === 'speed') {
             player.speedBoost = true;
             setTimeout(() => player.speedBoost = false, 8000);
         }
     }
 
-    // Gestion Boss
     function checkLevelProgress() {
         if (!state.bossActive && state.enemiesKilledInLevel >= levels[state.level].killsToBoss) {
             spawnBoss();
@@ -747,13 +675,9 @@
     function spawnBoss() {
         state.bossActive = true;
         boss = new Boss();
-        
-        // UI Boss
         const bossContainer = document.getElementById('boss-hp-container');
         bossContainer.classList.remove('hidden');
         document.getElementById('boss-hp-bar').style.width = '100%';
-        
-        // Effet alerte
         const alert = document.createElement('div');
         alert.innerText = "ATTENTION: " + levels[state.level].bossName + " !";
         alert.className = "absolute top-1/3 w-full text-center text-red-500 text-3xl font-bold blink";
@@ -770,38 +694,27 @@
             state.bossActive = false;
             boss = null;
             document.getElementById('boss-hp-container').classList.add('hidden');
-            
-            // Soin entre niveaux
             player.lives = 5;
             updateHUD();
-
-            // Transition
-            const overlay = document.getElementById('overlay');
-            overlay.classList.remove('hidden');
-            overlay.innerHTML = `
+            showOverlay(`
                 <h2 class="text-3xl text-yellow-400 mb-4">Niveau Terminé !</h2>
                 <p>Prêt pour le niveau ${state.level} ?</p>
                 <button class="btn" onclick="resumeGame()">Continuer</button>
-            `;
+            `);
             state.isRunning = false;
         }
     }
 
-    // Effet de tremblement
     let shakeDuration = 0;
     function screenShake(frames) {
         shakeDuration = frames;
     }
 
-    // Boucle principale
     function loop() {
         if (!state.isRunning) return;
-
-        // Nettoyage Canvas
-        ctx.fillStyle = levels[state.level].color; // Couleur de fond change selon niveau
+        ctx.fillStyle = levels[state.level].color;
         ctx.fillRect(0, 0, width, height);
 
-        // Shake effect
         if (shakeDuration > 0) {
             const dx = (Math.random() - 0.5) * 10;
             const dy = (Math.random() - 0.5) * 10;
@@ -810,78 +723,44 @@
         }
 
         state.frames++;
-
-        // Logique Joueur
-        player.update(); // Plus besoin de keys
+        player.update();
         player.draw();
-
-        // Tir via input (Space ou Touch)
-        if (input.shooting) {
-            player.shoot();
-        }
-
-        // Spawn Ennemis
-        if (!state.bossActive && state.frames % levels[state.level].spawnRate === 0) {
-            spawnEnemy();
-        }
-
-        // Update Ennemis
-        enemies.forEach((e, index) => {
-            e.update();
-            e.draw();
-            if (e.markedForDeletion) enemies.splice(index, 1);
-        });
-
-        // Update Boss
-        if (state.bossActive && boss) {
-            boss.update();
-            boss.draw();
-        }
-
-        // Update Projectiles
-        projectiles.forEach((p, index) => {
-            p.update();
-            p.draw();
-            if (p.markedForDeletion) projectiles.splice(index, 1);
-        });
-
-        // Update Particles
-        particles.forEach((p, index) => {
-            p.update();
-            p.draw();
-            if (p.life <= 0) particles.splice(index, 1);
-        });
-
-        // Update Powerups
-        powerups.forEach((p, index) => {
-            p.draw();
-            if (p.markedForDeletion) powerups.splice(index, 1);
-        });
+        if (input.shooting) player.shoot();
+        if (!state.bossActive && state.frames % levels[state.level].spawnRate === 0) spawnEnemy();
+        
+        enemies.forEach((e, i) => { e.update(); e.draw(); if (e.markedForDeletion) enemies.splice(i, 1); });
+        if (state.bossActive && boss) { boss.update(); boss.draw(); }
+        projectiles.forEach((p, i) => { p.update(); p.draw(); if (p.markedForDeletion) projectiles.splice(i, 1); });
+        particles.forEach((p, i) => { p.update(); p.draw(); if (p.life <= 0) particles.splice(i, 1); });
+        powerups.forEach((p, i) => { p.draw(); if (p.markedForDeletion) powerups.splice(i, 1); });
 
         checkCollisions();
         checkLevelProgress();
 
-        // Reset transform after shake
-        if (shakeDuration >= 0) { // Reset even if 0 just to be safe
-            ctx.setTransform(1, 0, 0, 1, 0, 0); 
-        }
-
+        if (shakeDuration >= 0) ctx.setTransform(1, 0, 0, 1, 0, 0); 
         requestAnimationFrame(loop);
     }
 
-    // Gestion de l'UI
     function updateHUD() {
         document.getElementById('level-display').innerText = `Niveau: ${state.level}`;
         document.getElementById('score-display').innerText = `Score: ${state.score}`;
-        
         let hearts = '';
         for(let i=0; i<player.lives; i++) hearts += '❤️';
         document.getElementById('lives-display').innerHTML = hearts;
     }
 
-    // Start / Stop
+    // Gestion centralisée de l'Overlay pour éviter les soucis d'event listener
+    function showOverlay(htmlContent) {
+        const overlay = document.getElementById('overlay');
+        overlay.classList.remove('hidden');
+        overlay.innerHTML = htmlContent;
+    }
+
     function startGame() {
+        console.log("Game Starting...");
         document.getElementById('overlay').classList.add('hidden');
+        
+        // Reset COMPLET
         player = new Player();
         enemies = [];
         projectiles = [];
@@ -896,7 +775,6 @@
         state.isRunning = true;
         state.bossActive = false;
         
-        // Reset Inputs
         input.active = false;
         input.shooting = false;
         
@@ -906,35 +784,33 @@
         loop();
     }
 
-    function resumeGame() {
+    // Exposer globalement pour le HTML injecté dans l'overlay
+    window.resumeGame = function() {
         document.getElementById('overlay').classList.add('hidden');
         state.isRunning = true;
-        // Nettoyer les projectiles restants pour éviter les morts injustes
         projectiles = [];
         loop();
-    }
+    };
+
+    window.startGame = startGame; // Explicite pour les onclick HTML
 
     function endGame() {
         state.isRunning = false;
-        const overlay = document.getElementById('overlay');
-        overlay.classList.remove('hidden');
-        overlay.innerHTML = `
+        showOverlay(`
             <h1 class="text-red-500 text-4xl mb-4">GAME OVER</h1>
             <p class="text-xl mb-4">Score Final: ${state.score}</p>
             <button class="btn" onclick="startGame()">Recommencer</button>
-        `;
+        `);
     }
 
     function winGame() {
         state.isRunning = false;
-        const overlay = document.getElementById('overlay');
-        overlay.classList.remove('hidden');
-        overlay.innerHTML = `
+        showOverlay(`
             <h1 class="text-yellow-400 text-4xl mb-4">VICTOIRE !</h1>
             <p class="mb-4">Tu as survécu à la jungle INABRA-KADRABRA !</p>
             <p class="text-xl mb-4">Score Final: ${state.score}</p>
             <button class="btn" onclick="startGame()">Rejouer</button>
-        `;
+        `);
     }
 
 </script>
